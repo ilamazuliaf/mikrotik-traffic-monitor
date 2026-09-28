@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MikroTik Traffic Monitor — Realtime Dashboard</title>
+  <meta name="description" content="Aplikasi monitoring trafik realtime dan historis interface MikroTik untuk STB Ubuntu">
+  
+  <!-- Fonts & Icons -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@600;700&display=swap" rel="stylesheet">
+  
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="static/css/style.css">
+  
+  <!-- Chart.js library -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+  <div class="dashboard-container">
+    
+    <!-- Header Navbar -->
+    <header class="header-bar">
+      <div class="brand-section">
+        <div class="brand-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+          </svg>
+        </div>
+        <div class="brand-title">
+          <h1>MIKROTIK TRAFFIC MONITOR</h1>
+          <span class="subtitle">Realtime Interface Bandwidth Monitor v1.0.0</span>
+        </div>
+      </div>
+
+      <div class="status-controls">
+        <div class="status-pill online" id="mikrotikStatusPill">
+          <span class="dot-indicator"></span>
+          <span id="mikrotikStatusText">ONLINE</span>
+        </div>
+
+        <div class="last-update-box">
+          <span>Last Update:</span>
+          <strong id="lastUpdateTime">--:--:--</strong>
+        </div>
+
+        <label class="demo-toggle" title="Aktifkan simulasi jika router atau backend tidak terhubung">
+          <input type="checkbox" id="demoToggle">
+          <span>Simulasi Mode</span>
+        </label>
+      </div>
+
+      <!-- Live Polling Progress Bar -->
+      <div class="polling-progress-bar" id="pollingBar"></div>
+    </header>
+
+    <!-- Offline Alert Banner -->
+    <div class="banner-offline" id="offlineBanner">
+      <div style="display: flex; align-items: center; gap: 0.6rem;">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+          <line x1="12" y1="9" x2="12" y2="13"></line>
+          <line x1="12" y1="17" x2="12.01" y2="17"></line>
+        </svg>
+        <span class="banner-msg">MIKROTIK OFFLINE - Menunggu koneksi kembali...</span>
+      </div>
+    </div>
+
+    <!-- Interface Cards Grid (PRD Section 4.1 B & Section 8) -->
+    <main class="interfaces-grid">
+
+      <!-- Ether1 Card -->
+      <article class="card-interface" id="card-ether1-BAROKAH">
+        <div class="card-header">
+          <div class="card-title">
+            <div class="icon-eth">ETH1</div>
+            <h3>ether1-BAROKAH</h3>
+          </div>
+          <span class="card-status running">RUNNING</span>
+        </div>
+
+        <div class="metrics-group">
+          <div class="metric-box rx">
+            <div class="metric-label">
+              <span>DOWNLOAD (RX)</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><polyline points="19 12 12 19 5 12"></polyline></svg>
+            </div>
+            <div>
+              <span class="metric-value rx-val">0.00</span>
+              <span class="metric-unit rx-unit">Mbps</span>
+            </div>
+          </div>
+
+          <div class="metric-box tx">
+            <div class="metric-label">
+              <span>UPLOAD (TX)</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg>
+            </div>
+            <div>
+              <span class="metric-value tx-val">0.00</span>
+              <span class="metric-unit tx-unit">Mbps</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="sparkline-wrapper" id="sparkline-ether1-BAROKAH"></div>
+      </article>
+
+      <!-- Ether2 Card -->
+      <article class="card-interface" id="card-ether2-BIZ">
+        <div class="card-header">
+          <div class="card-title">
+            <div class="icon-eth">ETH2</div>
+            <h3>ether2-BIZ</h3>
+          </div>
+          <span class="card-status running">RUNNING</span>
+        </div>
+
+        <div class="metrics-group">
+          <div class="metric-box rx">
+            <div class="metric-label">
+              <span>DOWNLOAD (RX)</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><polyline points="19 12 12 19 5 12"></polyline></svg>
+            </div>
+            <div>
+              <span class="metric-value rx-val">0.00</span>
+              <span class="metric-unit rx-unit">Mbps</span>
+            </div>
+          </div>
+
+          <div class="metric-box tx">
+            <div class="metric-label">
+              <span>UPLOAD (TX)</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg>
+            </div>
+            <div>
+              <span class="metric-value tx-val">0.00</span>
+              <span class="metric-unit tx-unit">Mbps</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="sparkline-wrapper" id="sparkline-ether2-BIZ"></div>
+      </article>
+
+      <!-- Ether3 Card -->
+      <article class="card-interface" id="card-ether3-WAHED">
+        <div class="card-header">
+          <div class="card-title">
+            <div class="icon-eth">ETH3</div>
+            <h3>ether3-WAHED</h3>
+          </div>
+          <span class="card-status running">RUNNING</span>
+        </div>
+
+        <div class="metrics-group">
+          <div class="metric-box rx">
+            <div class="metric-label">
+              <span>DOWNLOAD (RX)</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><polyline points="19 12 12 19 5 12"></polyline></svg>
+            </div>
+            <div>
+              <span class="metric-value rx-val">0.00</span>
+              <span class="metric-unit rx-unit">Mbps</span>
+            </div>
+          </div>
+
+          <div class="metric-box tx">
+            <div class="metric-label">
+              <span>UPLOAD (TX)</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg>
+            </div>
+            <div>
+              <span class="metric-value tx-val">0.00</span>
+              <span class="metric-unit tx-unit">Mbps</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="sparkline-wrapper" id="sparkline-ether3-WAHED"></div>
+      </article>
+
+    </main>
+
+    <!-- Traffic Graph Section (PRD Section 10, 11, 12, 13) -->
+    <section class="chart-section">
+      <div class="chart-header">
+        <div class="chart-title-group">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2">
+            <path d="M3 3v18h18"></path>
+            <path d="M18.7 8l-5.1 5.2-2.8-2.7L7 14.3"></path>
+          </svg>
+          <h2>TRAFFIC GRAPH</h2>
+        </div>
+
+        <div class="controls-toolbar">
+          <!-- Interface Filter (PRD Section 11) -->
+          <div class="filter-group filter-interface">
+            <button class="btn-pill active" data-interface="all">Semua Interface</button>
+            <button class="btn-pill" data-interface="ether1-BAROKAH">ether1-BAROKAH</button>
+            <button class="btn-pill" data-interface="ether2-BIZ">ether2-BIZ</button>
+            <button class="btn-pill" data-interface="ether3-WAHED">ether3-WAHED</button>
+          </div>
+
+          <!-- Period Filter (PRD Section 12) -->
+          <div class="filter-group filter-period">
+            <button class="btn-pill" data-period="5m">5 Menit</button>
+            <button class="btn-pill active" data-period="15m">15 Menit</button>
+            <button class="btn-pill" data-period="30m">30 Menit</button>
+            <button class="btn-pill" data-period="1h">1 Jam</button>
+            <button class="btn-pill" data-period="6h">6 Jam</button>
+            <button class="btn-pill" data-period="12h">12 Jam</button>
+            <button class="btn-pill" data-period="24h">24 Jam</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="chart-canvas-container">
+        <canvas id="trafficChartContainer"></canvas>
+      </div>
+    </section>
+
+    <!-- Footer Bar -->
+    <footer class="footer-info">
+      <div>MikroTik Traffic Monitor &copy; 2026 — Designed for Ubuntu STB</div>
+      <div>Auto-refresh interval: <strong>5s</strong> | Backend: <strong>FastAPI / SQLite</strong></div>
+    </footer>
+
+  </div>
+
+  <!-- Dashboard Script -->
+  <script src="static/js/dashboard.js"></script>
+
+</body>
+</html>
