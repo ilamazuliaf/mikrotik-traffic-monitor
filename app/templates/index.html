@@ -31,7 +31,7 @@
         </div>
         <div class="brand-title">
           <h1>MIKROTIK TRAFFIC MONITOR</h1>
-          <span class="subtitle">Realtime Interface Bandwidth Monitor v1.0.0</span>
+          <span class="subtitle">Realtime Interface Bandwidth Monitor v1.1.1</span>
         </div>
       </div>
 
@@ -68,123 +68,12 @@
       </div>
     </div>
 
-    <!-- Interface Cards Grid (PRD Section 4.1 B & Section 8) -->
-    <main class="interfaces-grid">
-
-      <!-- Ether1 Card -->
-      <article class="card-interface" id="card-ether1-BAROKAH">
-        <div class="card-header">
-          <div class="card-title">
-            <div class="icon-eth">ETH1</div>
-            <h3>ether1-BAROKAH</h3>
-          </div>
-          <span class="card-status running">RUNNING</span>
-        </div>
-
-        <div class="metrics-group">
-          <div class="metric-box rx">
-            <div class="metric-label">
-              <span>DOWNLOAD (RX)</span>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><polyline points="19 12 12 19 5 12"></polyline></svg>
-            </div>
-            <div>
-              <span class="metric-value rx-val">0.00</span>
-              <span class="metric-unit rx-unit">Mbps</span>
-            </div>
-          </div>
-
-          <div class="metric-box tx">
-            <div class="metric-label">
-              <span>UPLOAD (TX)</span>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg>
-            </div>
-            <div>
-              <span class="metric-value tx-val">0.00</span>
-              <span class="metric-unit tx-unit">Mbps</span>
-            </div>
-          </div>
-        </div>
-
-        <div class="sparkline-wrapper" id="sparkline-ether1-BAROKAH"></div>
-      </article>
-
-      <!-- Ether2 Card -->
-      <article class="card-interface" id="card-ether2-BIZ">
-        <div class="card-header">
-          <div class="card-title">
-            <div class="icon-eth">ETH2</div>
-            <h3>ether2-BIZ</h3>
-          </div>
-          <span class="card-status running">RUNNING</span>
-        </div>
-
-        <div class="metrics-group">
-          <div class="metric-box rx">
-            <div class="metric-label">
-              <span>DOWNLOAD (RX)</span>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><polyline points="19 12 12 19 5 12"></polyline></svg>
-            </div>
-            <div>
-              <span class="metric-value rx-val">0.00</span>
-              <span class="metric-unit rx-unit">Mbps</span>
-            </div>
-          </div>
-
-          <div class="metric-box tx">
-            <div class="metric-label">
-              <span>UPLOAD (TX)</span>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg>
-            </div>
-            <div>
-              <span class="metric-value tx-val">0.00</span>
-              <span class="metric-unit tx-unit">Mbps</span>
-            </div>
-          </div>
-        </div>
-
-        <div class="sparkline-wrapper" id="sparkline-ether2-BIZ"></div>
-      </article>
-
-      <!-- Ether3 Card -->
-      <article class="card-interface" id="card-ether3-WAHED">
-        <div class="card-header">
-          <div class="card-title">
-            <div class="icon-eth">ETH3</div>
-            <h3>ether3-WAHED</h3>
-          </div>
-          <span class="card-status running">RUNNING</span>
-        </div>
-
-        <div class="metrics-group">
-          <div class="metric-box rx">
-            <div class="metric-label">
-              <span>DOWNLOAD (RX)</span>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><polyline points="19 12 12 19 5 12"></polyline></svg>
-            </div>
-            <div>
-              <span class="metric-value rx-val">0.00</span>
-              <span class="metric-unit rx-unit">Mbps</span>
-            </div>
-          </div>
-
-          <div class="metric-box tx">
-            <div class="metric-label">
-              <span>UPLOAD (TX)</span>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg>
-            </div>
-            <div>
-              <span class="metric-value tx-val">0.00</span>
-              <span class="metric-unit tx-unit">Mbps</span>
-            </div>
-          </div>
-        </div>
-
-        <div class="sparkline-wrapper" id="sparkline-ether3-WAHED"></div>
-      </article>
-
+    <!-- Interface Cards Grid (Dynamic rendering via dashboard.js) -->
+    <main class="interfaces-grid" id="interfacesGrid">
+      <!-- Cards generated dynamically from /api/config -->
     </main>
 
-    <!-- Traffic Graph Section (PRD Section 10, 11, 12, 13) -->
+    <!-- Traffic Graph Section (PRD Section 10-16) -->
     <section class="chart-section">
       <div class="chart-header">
         <div class="chart-title-group">
@@ -193,31 +82,38 @@
             <path d="M18.7 8l-5.1 5.2-2.8-2.7L7 14.3"></path>
           </svg>
           <h2>TRAFFIC GRAPH</h2>
+          
+          <!-- Mode Indicator Badge & Snapshot Info (PRD Section 16) -->
+          <div class="mode-badge live" id="graphModeBadge">
+            <span class="mode-dot"></span>
+            <span id="graphModeText">LIVE</span>
+          </div>
+          <span class="snapshot-time" id="snapshotTimeText"></span>
         </div>
 
         <div class="controls-toolbar">
-          <!-- Interface Filter (PRD Section 11) -->
-          <div class="filter-group filter-interface">
-            <button class="btn-pill active" data-interface="all">Semua Interface</button>
-            <button class="btn-pill" data-interface="ether1-BAROKAH">ether1-BAROKAH</button>
-            <button class="btn-pill" data-interface="ether2-BIZ">ether2-BIZ</button>
-            <button class="btn-pill" data-interface="ether3-WAHED">ether3-WAHED</button>
-          </div>
+          <!-- Refresh Historical Button (PRD Section 15) -->
+          <button class="btn-refresh-historical" id="btnRefreshHistorical" style="display: none;" title="Fetch latest snapshot data">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+            </svg>
+            Refresh
+          </button>
 
-          <!-- Period Filter (PRD Section 12) -->
-          <div class="filter-group filter-period">
-            <button class="btn-pill" data-period="5m">5 Menit</button>
-            <button class="btn-pill active" data-period="15m">15 Menit</button>
-            <button class="btn-pill" data-period="30m">30 Menit</button>
-            <button class="btn-pill" data-period="1h">1 Jam</button>
-            <button class="btn-pill" data-period="6h">6 Jam</button>
-            <button class="btn-pill" data-period="12h">12 Jam</button>
-            <button class="btn-pill" data-period="24h">24 Jam</button>
-          </div>
+          <!-- Interface Filter (Dynamic rendering via dashboard.js) -->
+          <div class="filter-group filter-interface" id="filterInterfaceGroup"></div>
+
+          <!-- Period Filter (Dynamic rendering via dashboard.js) -->
+          <div class="filter-group filter-period" id="filterPeriodGroup"></div>
         </div>
       </div>
 
       <div class="chart-canvas-container">
+        <!-- Chart Loading / Error / Empty Overlay (PRD Section 41, 42, 43) -->
+        <div class="chart-overlay" id="chartOverlay" style="display: none;">
+          <div class="overlay-spinner" id="overlaySpinner"></div>
+          <span id="overlayMessage">Loading data...</span>
+        </div>
         <canvas id="trafficChartContainer"></canvas>
       </div>
     </section>
@@ -225,7 +121,7 @@
     <!-- Footer Bar -->
     <footer class="footer-info">
       <div>MikroTik Traffic Monitor &copy; 2026 — Designed for Ubuntu STB</div>
-      <div>Auto-refresh interval: <strong>5s</strong> | Backend: <strong>FastAPI / SQLite</strong></div>
+      <div>Auto-refresh: <strong id="footerRefreshStatus">5s (Realtime)</strong> | Backend: <strong>FastAPI / SQLite</strong></div>
     </footer>
 
   </div>
