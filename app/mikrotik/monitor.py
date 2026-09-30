@@ -126,7 +126,7 @@ class TrafficMonitorWorker:
             self.cleanup_counter += 1
             if self.cleanup_counter >= 100:
                 self.cleanup_counter = 0
-                run_retention_cleanup(retention_hours=24)
+                run_retention_cleanup(retention_hours=config.get_max_period_hours())
 
             # Sleep remaining interval
             elapsed_loop = time.time() - start_time

@@ -1,30 +1,46 @@
 /**
- * MikroTik Traffic Monitor - Dashboard JS Logic
- * Compatible with FastAPI backend & standalone preview demo mode
+ * MikroTik Traffic Monitor - Frontend Engine v1.1.0
+ * Fully dynamic interface & graph period management with Realtime vs Historical Snapshot modes.
+ * Compatible with FastAPI backend & standalone preview/demo mode.
  */
 
-// Configuration & Global State
-const MONITORED_INTERFACES = [
-  'ether1-BAROKAH',
-  'ether2-BIZ',
-  'ether3-WAHED'
-];
+// Default Fallback Configuration (if backend /api/config is unreachable)
+const DEFAULT_CONFIG = {
+  interfaces: ['ether1-BAROKAH', 'ether2-BIZ', 'ether3-WAHED'],
+  graph_periods: [
+    { value: '5m', label: '5 Menit', mode: 'realtime' },
+    { value: '15m', label: '15 Menit', mode: 'realtime' },
+    { value: '30m', label: '30 Menit', mode: 'realtime' },
+    { value: '1h', label: '1 Jam', mode: 'historical' },
+    { value: '6h', label: '6 Jam', mode: 'historical' },
+    { value: '12h', label: '12 Jam', mode: 'historical' },
+    { value: '24h', label: '24 Jam', mode: 'historical' }
+  ],
+  default_period: '15m',
+  realtime_max: '30m',
+  poll_interval: 5
+};
 
+// Application State
+let appConfig = { ...DEFAULT_CONFIG };
+let monitoredInterfaces = [];
 let selectedInterfaceFilter = 'all'; // 'all' or interface name
-let selectedPeriodFilter = '15m'; // '5m', '15m', '30m', '1h', '6h', '12h', '24h'
+let selectedPeriodFilter = '15m'; // e.g. '5m', '15m', '30m', '1h', '6h', '12h', '24h'
+let currentMode = 'realtime'; // 'realtime' or 'historical'
 let pollIntervalSeconds = 5;
-let pollTimer = null;
+
 let countdownTimer = null;
-let currentProgress = 0;
 let lastSuccessfulUpdate = null;
+let lastSnapshotTimestamp = null;
 let trafficChart = null;
+let sparklineHistory = {};
 
-// Mock mode control
+// Demo/Mock mode state
 let isDemoMode = false;
-let mockHistoricalData = {};
+let mockHistoricalPoints = [];
 
-// Color palette for interfaces and datasets
-const COLOR_SCHEME = {
+// Pre-defined visual palette with fallback generator for dynamic interfaces
+const PRESET_COLORS = {
   'ether1-BAROKAH': {
     rx: { line: '#06b6d4', bg: 'rgba(6, 182, 212, 0.15)' },
     tx: { line: '#a855f7', bg: 'rgba(168, 85, 247, 0.15)' }
@@ -44,7 +60,28 @@ const COLOR_SCHEME = {
 };
 
 /**
- * Bandwidth calculation & formatting (PRD Section 6)
+ * Generates consistent colors for any dynamic interface name
+ */
+function getInterfaceColors(ifaceName) {
+  if (PRESET_COLORS[ifaceName]) {
+    return PRESET_COLORS[ifaceName];
+  }
+  // Deterministic HSL color generator based on name hash
+  let hash = 0;
+  for (let i = 0; i < ifaceName.length; i++) {
+    hash = ifaceName.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const hueRx = Math.abs(hash) % 360;
+  const hueTx = (hueRx + 140) % 360;
+
+  return {
+    rx: { line: `hsl(${hueRx}, 85%, 60%)`, bg: `hsla(${hueRx}, 85%, 60%, 0.15)` },
+    tx: { line: `hsl(${hueTx}, 85%, 65%)`, bg: `hsla(${hueTx}, 85%, 65%, 0.15)` }
+  };
+}
+
+/**
+ * Bandwidth calculation & formatting
  * Thresholds:
  * < 1 Kbps      => bps
  * 1 Kbps-999 Kbps => Kbps
@@ -72,55 +109,301 @@ function formatBandwidth(bps) {
   return `${parts.val} ${parts.unit}`;
 }
 
-// Initialize Dashboard
-document.addEventListener('DOMContentLoaded', () => {
-  initSparklines();
+/**
+ * Parses time string (e.g. "5m", "1h", "24h", "7d") into seconds
+ */
+function parsePeriodToSeconds(periodStr) {
+  if (!periodStr) return 900;
+  const match = periodStr.match(/^(\d+)([mhd])$/i);
+  if (!match) return 900;
+  const val = parseInt(match[1], 10);
+  const unit = match[2].toLowerCase();
+  if (unit === 'm') return val * 60;
+  if (unit === 'h') return val * 3600;
+  if (unit === 'd') return val * 86400;
+  return 900;
+}
+
+/**
+ * Formats period code into human readable Indonesian label
+ */
+function getPeriodLabel(periodStr) {
+  if (!periodStr) return periodStr;
+  const match = periodStr.match(/^(\d+)([mhd])$/i);
+  if (!match) return periodStr;
+  const val = match[1];
+  const unit = match[2].toLowerCase();
+  if (unit === 'm') return `${val} Menit`;
+  if (unit === 'h') return `${val} Jam`;
+  if (unit === 'd') return `${val} Hari`;
+  return periodStr;
+}
+
+/**
+ * Determines whether a period is realtime or historical snapshot
+ */
+function isPeriodRealtime(periodValue) {
+  // Check if period object explicitly defines mode
+  const periodObj = (appConfig.graph_periods || []).find(p => p.value === periodValue);
+  if (periodObj && periodObj.mode) {
+    return periodObj.mode === 'realtime';
+  }
+  // Fallback to comparing duration against realtime_max
+  const maxSec = parsePeriodToSeconds(appConfig.realtime_max || '30m');
+  const periodSec = parsePeriodToSeconds(periodValue);
+  return periodSec <= maxSec;
+}
+
+// Initialization on DOM ready
+document.addEventListener('DOMContentLoaded', async () => {
   initChart();
-  initFilters();
-  initDemoModeToggle();
-  
-  // Initial Fetch & Start Polling
-  fetchDashboardData();
-  startPollingProgress();
+  initDemoToggle();
+  initRefreshButton();
+  initVisibilityListener();
+
+  // Load dynamic configuration from backend
+  await loadConfig();
+
+  // Initial Data Fetch
+  await applyFilterChange(true);
 });
 
-// Setup Filter Listeners
-function initFilters() {
-  const interfaceBtns = document.querySelectorAll('.filter-interface .btn-pill');
-  interfaceBtns.forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      interfaceBtns.forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      selectedInterfaceFilter = btn.getAttribute('data-interface');
-      updateChartData();
-    });
-  });
+/**
+ * Loads dynamic configuration from /api/config
+ */
+async function loadConfig() {
+  try {
+    const res = await fetch('/api/config');
+    if (res.ok) {
+      const data = await res.json();
+      appConfig = { ...DEFAULT_CONFIG, ...data };
+    } else {
+      console.warn('/api/config not available, using default configuration');
+      setDemoFallbackMode(true);
+    }
+  } catch (err) {
+    console.warn('/api/config request failed:', err);
+    setDemoFallbackMode(true);
+  }
 
-  const periodBtns = document.querySelectorAll('.filter-period .btn-pill');
-  periodBtns.forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      periodBtns.forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      selectedPeriodFilter = btn.getAttribute('data-period');
-      updateChartData();
-    });
+  monitoredInterfaces = appConfig.interfaces || DEFAULT_CONFIG.interfaces;
+  pollIntervalSeconds = appConfig.poll_interval || 5;
+
+  // Set default period from config if valid, or fallback to first period
+  const periods = appConfig.graph_periods || DEFAULT_CONFIG.graph_periods;
+  const defaultP = appConfig.default_period;
+  if (defaultP && periods.some(p => p.value === defaultP)) {
+    selectedPeriodFilter = defaultP;
+  } else if (periods.length > 0) {
+    selectedPeriodFilter = periods[0].value;
+  }
+
+  // Render dynamic interface cards & filter buttons
+  renderDynamicCards();
+  renderDynamicFilters();
+}
+
+/**
+ * Dynamically builds interface cards based on MONITORED_INTERFACES
+ */
+function renderDynamicCards() {
+  const container = document.getElementById('interfacesGrid');
+  if (!container) return;
+
+  container.innerHTML = '';
+  sparklineHistory = {};
+
+  monitoredInterfaces.forEach((iface, idx) => {
+    sparklineHistory[iface] = { rx: [], tx: [] };
+
+    // Format index for ETH icon (e.g. ether1-BAROKAH => ETH1)
+    let ethNum = idx + 1;
+    const match = iface.match(/ether(\d+)/i);
+    if (match) ethNum = match[1];
+
+    const cardHtml = `
+      <article class="card-interface" id="card-${iface}">
+        <div class="card-header">
+          <div class="card-title">
+            <div class="icon-eth">ETH${ethNum}</div>
+            <h3>${iface}</h3>
+          </div>
+          <span class="card-status running">RUNNING</span>
+        </div>
+
+        <div class="metrics-group">
+          <div class="metric-box rx">
+            <div class="metric-label">
+              <span>DOWNLOAD (RX)</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><polyline points="19 12 12 19 5 12"></polyline></svg>
+            </div>
+            <div>
+              <span class="metric-value rx-val">0.00</span>
+              <span class="metric-unit rx-unit">Mbps</span>
+            </div>
+          </div>
+
+          <div class="metric-box tx">
+            <div class="metric-label">
+              <span>UPLOAD (TX)</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg>
+            </div>
+            <div>
+              <span class="metric-value tx-val">0.00</span>
+              <span class="metric-unit tx-unit">Mbps</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="sparkline-wrapper" id="sparkline-${iface}"></div>
+      </article>
+    `;
+    container.insertAdjacentHTML('beforeend', cardHtml);
   });
 }
 
-function initDemoModeToggle() {
-  const toggle = document.getElementById('demoToggle');
-  if (toggle) {
-    toggle.addEventListener('change', (e) => {
-      isDemoMode = e.target.checked;
-      fetchDashboardData();
+/**
+ * Dynamically builds filter button groups for interfaces & periods
+ */
+function renderDynamicFilters() {
+  // Interface filter group
+  const interfaceGroup = document.getElementById('filterInterfaceGroup');
+  if (interfaceGroup) {
+    interfaceGroup.innerHTML = '';
+
+    const allBtn = document.createElement('button');
+    allBtn.className = `btn-pill ${selectedInterfaceFilter === 'all' ? 'active' : ''}`;
+    allBtn.setAttribute('data-interface', 'all');
+    allBtn.textContent = 'Semua Interface';
+    allBtn.addEventListener('click', () => onInterfaceFilterSelect('all', allBtn));
+    interfaceGroup.appendChild(allBtn);
+
+    monitoredInterfaces.forEach(iface => {
+      const btn = document.createElement('button');
+      btn.className = `btn-pill ${selectedInterfaceFilter === iface ? 'active' : ''}`;
+      btn.setAttribute('data-interface', iface);
+      btn.textContent = iface;
+      btn.addEventListener('click', () => onInterfaceFilterSelect(iface, btn));
+      interfaceGroup.appendChild(btn);
+    });
+  }
+
+  // Period filter group
+  const periodGroup = document.getElementById('filterPeriodGroup');
+  if (periodGroup) {
+    periodGroup.innerHTML = '';
+    const periods = appConfig.graph_periods || DEFAULT_CONFIG.graph_periods;
+
+    periods.forEach(pObj => {
+      const val = typeof pObj === 'string' ? pObj : pObj.value;
+      const label = typeof pObj === 'object' && pObj.label ? pObj.label : getPeriodLabel(val);
+
+      const btn = document.createElement('button');
+      btn.className = `btn-pill ${selectedPeriodFilter === val ? 'active' : ''}`;
+      btn.setAttribute('data-period', val);
+      btn.textContent = label;
+      btn.addEventListener('click', () => onPeriodFilterSelect(val, btn));
+      periodGroup.appendChild(btn);
     });
   }
 }
 
-// Polling Loop with Visual Progress Bar
-function startPollingProgress() {
-  if (pollTimer) clearInterval(pollTimer);
-  if (countdownTimer) clearInterval(countdownTimer);
+function onInterfaceFilterSelect(iface, clickBtn) {
+  const container = document.getElementById('filterInterfaceGroup');
+  if (container) {
+    container.querySelectorAll('.btn-pill').forEach(b => b.classList.remove('active'));
+  }
+  clickBtn.classList.add('active');
+  selectedInterfaceFilter = iface;
+  applyFilterChange();
+}
+
+function onPeriodFilterSelect(periodVal, clickBtn) {
+  const container = document.getElementById('filterPeriodGroup');
+  if (container) {
+    container.querySelectorAll('.btn-pill').forEach(b => b.classList.remove('active'));
+  }
+  clickBtn.classList.add('active');
+  selectedPeriodFilter = periodVal;
+  applyFilterChange();
+}
+
+/**
+ * Handles switching between Realtime vs Historical Snapshot mode
+ */
+async function applyFilterChange(isInitial = false) {
+  const isRealtime = isPeriodRealtime(selectedPeriodFilter);
+  currentMode = isRealtime ? 'realtime' : 'historical';
+
+  updateModeBadgeUI();
+
+  if (currentMode === 'realtime') {
+    startPolling();
+  } else {
+    stopPolling();
+  }
+
+  await fetchDashboardData();
+  await fetchChartData();
+}
+
+/**
+ * Updates UI Mode Badge (LIVE vs HISTORICAL) & Refresh Button visibility
+ */
+function updateModeBadgeUI() {
+  const badge = document.getElementById('graphModeBadge');
+  const badgeText = document.getElementById('graphModeText');
+  const refreshBtn = document.getElementById('btnRefreshHistorical');
+  const progressBar = document.getElementById('pollingBar');
+  const footerStatus = document.getElementById('footerRefreshStatus');
+  const snapshotText = document.getElementById('snapshotTimeText');
+
+  if (currentMode === 'realtime') {
+    if (badge) {
+      badge.className = 'mode-badge live';
+      if (badgeText) badgeText.textContent = 'LIVE';
+    }
+    if (refreshBtn) refreshBtn.style.display = 'none';
+    if (progressBar) progressBar.style.display = 'block';
+    if (footerStatus) footerStatus.textContent = `${pollIntervalSeconds}s (Realtime)`;
+    if (snapshotText) snapshotText.textContent = '';
+  } else {
+    if (badge) {
+      badge.className = 'mode-badge historical';
+      if (badgeText) badgeText.textContent = 'HISTORICAL';
+    }
+    if (refreshBtn) refreshBtn.style.display = 'inline-flex';
+    if (progressBar) progressBar.style.display = 'none';
+    if (footerStatus) footerStatus.textContent = 'Disabled (Historical Snapshot)';
+    if (snapshotText && lastSnapshotTimestamp) {
+      snapshotText.textContent = `Snapshot: ${lastSnapshotTimestamp}`;
+    }
+  }
+}
+
+/**
+ * Manual Refresh Button for Historical Mode (PRD Section 15)
+ */
+function initRefreshButton() {
+  const btn = document.getElementById('btnRefreshHistorical');
+  if (btn) {
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      btn.style.opacity = '0.6';
+      await fetchChartData();
+      btn.disabled = false;
+      btn.style.opacity = '1';
+    });
+  }
+}
+
+/**
+ * Polling progress bar & timer control (PRD Section 46)
+ */
+function startPolling() {
+  stopPolling();
+
+  if (document.hidden) return; // PRD Section 47: Pause when tab in background
 
   const progressBar = document.getElementById('pollingBar');
   const stepMs = 100;
@@ -129,49 +412,52 @@ function startPollingProgress() {
 
   countdownTimer = setInterval(() => {
     elapsedMs += stepMs;
-    currentProgress = (elapsedMs / totalMs) * 100;
-    if (progressBar) progressBar.style.width = `${Math.min(currentProgress, 100)}%`;
+    const progress = (elapsedMs / totalMs) * 100;
+    if (progressBar) progressBar.style.width = `${Math.min(progress, 100)}%`;
 
     if (elapsedMs >= totalMs) {
       elapsedMs = 0;
-      fetchDashboardData();
+      if (currentMode === 'realtime') {
+        fetchDashboardData();
+        fetchChartData();
+      }
     }
   }, stepMs);
 }
 
-// Primary Fetch Method
-async function fetchDashboardData() {
-  try {
-    if (isDemoMode) {
-      handleDemoData();
-      return;
+function stopPolling() {
+  if (countdownTimer) {
+    clearInterval(countdownTimer);
+    countdownTimer = null;
+  }
+  const progressBar = document.getElementById('pollingBar');
+  if (progressBar) progressBar.style.width = '0%';
+}
+
+/**
+ * Tab Visibility Optimization (PRD Section 47)
+ */
+function initVisibilityListener() {
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      stopPolling();
+    } else {
+      if (currentMode === 'realtime') {
+        fetchDashboardData();
+        fetchChartData();
+        startPolling();
+      }
     }
+  });
+}
 
-    // Attempt real API call to FastAPI backend
-    const [statusRes, interfacesRes] = await Promise.all([
-      fetch('/api/status').catch(() => null),
-      fetch('/api/interfaces').catch(() => null)
-    ]);
-
-    if (!statusRes || !statusRes.ok || !interfacesRes || !interfacesRes.ok) {
-      // Backend not yet running -> fallback to demo mode automatically with subtle UI notification
-      setDemoFallbackMode(true);
-      handleDemoData();
-      return;
-    }
-
-    setDemoFallbackMode(false);
-    const statusData = await statusRes.json();
-    const interfacesData = await interfacesRes.json();
-
-    updateStatusUI(statusData.mikrotik, statusData.last_update);
-    updateInterfacesUI(interfacesData.interfaces);
-    updateChartData();
-
-  } catch (err) {
-    console.warn('API connection offline, running mock data:', err);
-    setDemoFallbackMode(true);
-    handleDemoData();
+function initDemoToggle() {
+  const toggle = document.getElementById('demoToggle');
+  if (toggle) {
+    toggle.addEventListener('change', (e) => {
+      isDemoMode = e.target.checked;
+      applyFilterChange();
+    });
   }
 }
 
@@ -182,7 +468,7 @@ function setDemoFallbackMode(enabled) {
     toggle.checked = true;
     isDemoMode = true;
     if (banner) {
-      banner.querySelector('.banner-msg').textContent = 'Backend FastAPI belum aktif atau router offline. Menjalankan Mode Simulasi Realtime.';
+      banner.querySelector('.banner-msg').textContent = 'Backend FastAPI belum aktif. Menjalankan Mode Simulasi Realtime.';
       banner.classList.add('active');
     }
   } else if (!enabled && banner) {
@@ -190,7 +476,40 @@ function setDemoFallbackMode(enabled) {
   }
 }
 
-// Status Updates
+/**
+ * Fetches router status & interface cards data (RX/TX bps)
+ */
+async function fetchDashboardData() {
+  if (isDemoMode) {
+    handleDemoCardsUpdate();
+    return;
+  }
+
+  try {
+    const [statusRes, interfacesRes] = await Promise.all([
+      fetch('/api/status').catch(() => null),
+      fetch('/api/interfaces').catch(() => null)
+    ]);
+
+    if (!statusRes || !statusRes.ok || !interfacesRes || !interfacesRes.ok) {
+      setDemoFallbackMode(true);
+      handleDemoCardsUpdate();
+      return;
+    }
+
+    setDemoFallbackMode(false);
+    const statusData = await statusRes.json();
+    const interfacesData = await interfacesRes.json();
+
+    updateStatusUI(statusData.mikrotik, statusData.last_update);
+    updateInterfacesUI(interfacesData.interfaces);
+
+  } catch (err) {
+    setDemoFallbackMode(true);
+    handleDemoCardsUpdate();
+  }
+}
+
 function updateStatusUI(status, lastUpdateStr) {
   const statusPill = document.getElementById('mikrotikStatusPill');
   const statusText = document.getElementById('mikrotikStatusText');
@@ -200,20 +519,20 @@ function updateStatusUI(status, lastUpdateStr) {
   const formattedTime = lastUpdateStr ? formatTimestamp(lastUpdateStr) : new Date().toLocaleTimeString('id-ID');
 
   if (status === 'online') {
-    statusPill.className = 'status-pill online';
-    statusText.textContent = 'ONLINE';
+    if (statusPill) statusPill.className = 'status-pill online';
+    if (statusText) statusText.textContent = 'ONLINE';
     lastSuccessfulUpdate = formattedTime;
     if (offlineBanner && !isDemoMode) offlineBanner.classList.remove('active');
   } else if (status === 'offline') {
-    statusPill.className = 'status-pill offline';
-    statusText.textContent = 'OFFLINE';
+    if (statusPill) statusPill.className = 'status-pill offline';
+    if (statusText) statusText.textContent = 'OFFLINE';
     if (offlineBanner) {
-      offlineBanner.querySelector('.banner-msg').textContent = `MIKROTIK OFFLINE. Last successful update: ${lastSuccessfulUpdate || formattedTime}`;
+      offlineBanner.querySelector('.banner-msg').textContent = `MIKROTIK OFFLINE. Data snapshot terakhir: ${lastSuccessfulUpdate || formattedTime}`;
       offlineBanner.classList.add('active');
     }
   } else {
-    statusPill.className = 'status-pill connecting';
-    statusText.textContent = 'CONNECTING';
+    if (statusPill) statusPill.className = 'status-pill connecting';
+    if (statusText) statusText.textContent = 'CONNECTING';
   }
 
   if (lastUpdateEl) lastUpdateEl.textContent = formattedTime;
@@ -222,13 +541,13 @@ function updateStatusUI(status, lastUpdateStr) {
 function formatTimestamp(isoStr) {
   try {
     const d = new Date(isoStr);
+    if (isNaN(d.getTime())) return isoStr;
     return d.toLocaleTimeString('id-ID', { hour12: false });
   } catch (e) {
     return isoStr;
   }
 }
 
-// Interface Cards UI Update
 function updateInterfacesUI(interfacesList) {
   if (!interfacesList || !Array.isArray(interfacesList)) return;
 
@@ -236,7 +555,6 @@ function updateInterfacesUI(interfacesList) {
     const card = document.getElementById(`card-${iface.name}`);
     if (!card) return;
 
-    // Status
     const statusBadge = card.querySelector('.card-status');
     const rxValEl = card.querySelector('.rx-val');
     const rxUnitEl = card.querySelector('.rx-unit');
@@ -244,15 +562,11 @@ function updateInterfacesUI(interfacesList) {
     const txUnitEl = card.querySelector('.tx-unit');
 
     const statusUpper = (iface.status || 'UNKNOWN').toUpperCase();
-    statusBadge.textContent = statusUpper;
-    
-    if (statusUpper === 'RUNNING') {
-      statusBadge.className = 'card-status running';
-    } else {
-      statusBadge.className = 'card-status not_running';
+    if (statusBadge) {
+      statusBadge.textContent = statusUpper;
+      statusBadge.className = statusUpper === 'RUNNING' ? 'card-status running' : 'card-status not_running';
     }
 
-    // Bandwidth formatting
     const rxParsed = splitBandwidth(iface.rx_bps);
     const txParsed = splitBandwidth(iface.tx_bps);
 
@@ -261,17 +575,7 @@ function updateInterfacesUI(interfacesList) {
     if (txValEl) txValEl.textContent = txParsed.val;
     if (txUnitEl) txUnitEl.textContent = txParsed.unit;
 
-    // Update Sparkline
     updateSparkline(iface.name, iface.rx_bps, iface.tx_bps);
-  });
-}
-
-// Sparklines Rendering for Cards
-const sparklineHistory = {};
-
-function initSparklines() {
-  MONITORED_INTERFACES.forEach(iface => {
-    sparklineHistory[iface] = { rx: [], tx: [] };
   });
 }
 
@@ -291,6 +595,7 @@ function updateSparkline(ifaceName, rxBps, txBps) {
   const width = container.clientWidth || 240;
   const height = 36;
   const max = Math.max(...history.rx, ...history.tx, 1000000);
+  const colors = getInterfaceColors(ifaceName);
 
   function getPathPoints(data) {
     if (data.length < 2) return '';
@@ -306,13 +611,15 @@ function updateSparkline(ifaceName, rxBps, txBps) {
 
   container.innerHTML = `
     <svg width="100%" height="${height}" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">
-      ${rxPath ? `<path d="M ${rxPath}" fill="none" stroke="#06b6d4" stroke-width="2" opacity="0.85"/>` : ''}
-      ${txPath ? `<path d="M ${txPath}" fill="none" stroke="#a855f7" stroke-width="1.5" stroke-dasharray="3,3" opacity="0.85"/>` : ''}
+      ${rxPath ? `<path d="M ${rxPath}" fill="none" stroke="${colors.rx.line}" stroke-width="2" opacity="0.85"/>` : ''}
+      ${txPath ? `<path d="M ${txPath}" fill="none" stroke="${colors.tx.line}" stroke-width="1.5" stroke-dasharray="3,3" opacity="0.85"/>` : ''}
     </svg>
   `;
 }
 
-// Interactive Chart.js setup
+/**
+ * Initializes Chart.js instance with minimal CPU load config
+ */
 function initChart() {
   const ctx = document.getElementById('trafficChartContainer');
   if (!ctx) return;
@@ -329,9 +636,10 @@ function initChart() {
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      animation: false, // Disables CPU heavy animations for STB/mobile
       interaction: {
         mode: 'index',
-        intersect: false,
+        intersect: false
       },
       plugins: {
         legend: {
@@ -346,7 +654,7 @@ function initChart() {
           }
         },
         tooltip: {
-          backgroundColor: 'rgba(15, 23, 42, 0.9)',
+          backgroundColor: 'rgba(15, 23, 42, 0.95)',
           borderColor: 'rgba(255, 255, 255, 0.1)',
           borderWidth: 1,
           padding: 12,
@@ -378,149 +686,194 @@ function initChart() {
         }
       },
       elements: {
-        line: { tension: 0.35, borderWidth: 2 },
+        line: { tension: 0.3, borderWidth: 2 },
         point: { radius: 0, hoverRadius: 5 }
       }
     }
   });
 }
 
-// Fetch or calculate chart dataset based on filter selection
-async function updateChartData() {
+/**
+ * Controls chart loading / error / empty state overlays (PRD Section 41-43)
+ */
+function setChartOverlay(show, message = '', type = 'loading') {
+  const overlay = document.getElementById('chartOverlay');
+  const msgEl = document.getElementById('overlayMessage');
+  const spinner = document.getElementById('overlaySpinner');
+
+  if (!overlay) return;
+
+  if (show) {
+    overlay.style.display = 'flex';
+    if (msgEl) msgEl.textContent = message;
+    if (spinner) spinner.style.display = type === 'loading' ? 'block' : 'none';
+  } else {
+    overlay.style.display = 'none';
+  }
+}
+
+/**
+ * Fetches & renders graph data from backend API /api/traffic
+ */
+async function fetchChartData(forceRefresh = false) {
   if (!trafficChart) return;
 
+  if (currentMode === 'historical') {
+    setChartOverlay(true, 'Loading historical traffic data...', 'loading');
+  }
+
   let timeData = [];
+  let isSuccess = false;
 
   if (isDemoMode) {
     timeData = getDemoTrafficData(selectedInterfaceFilter, selectedPeriodFilter);
+    isSuccess = true;
   } else {
     try {
-      const url = `/api/traffic?interface=${encodeURIComponent(selectedInterfaceFilter)}&period=${encodeURIComponent(selectedPeriodFilter)}`;
+      const url = `/api/traffic?interface=${encodeURIComponent(selectedInterfaceFilter)}&period=${encodeURIComponent(selectedPeriodFilter)}&mode=${currentMode}`;
       const res = await fetch(url);
+
       if (res.ok) {
         const json = await res.json();
         timeData = json.data || [];
+        isSuccess = true;
       } else {
         timeData = getDemoTrafficData(selectedInterfaceFilter, selectedPeriodFilter);
+        isSuccess = true;
       }
-    } catch (e) {
+    } catch (err) {
+      if (currentMode === 'historical') {
+        setChartOverlay(true, 'Unable to load historical traffic data.', 'error');
+        return;
+      }
       timeData = getDemoTrafficData(selectedInterfaceFilter, selectedPeriodFilter);
+      isSuccess = true;
     }
   }
 
-  // Format labels & datasets for Chart.js
-  const labels = timeData.map(item => {
-    const d = new Date(item.timestamp);
-    return d.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  });
+  if (isSuccess) {
+    const nowStr = new Date().toLocaleTimeString('id-ID');
+    lastSnapshotTimestamp = nowStr;
 
-  const datasets = [];
+    if (currentMode === 'historical') {
+      const snapshotText = document.getElementById('snapshotTimeText');
+      if (snapshotText) snapshotText.textContent = `Snapshot: ${nowStr}`;
+    }
 
-  if (selectedInterfaceFilter === 'all') {
-    // Show total RX & TX or per interface curves
-    MONITORED_INTERFACES.forEach(iface => {
-      const colors = COLOR_SCHEME[iface];
+    if (timeData.length === 0) {
+      setChartOverlay(true, 'No traffic data available for this period.', 'empty');
+      trafficChart.data.labels = [];
+      trafficChart.data.datasets = [];
+      trafficChart.update('none');
+      return;
+    }
+
+    setChartOverlay(false);
+
+    // Build Chart Datasets
+    const labels = timeData.map(item => {
+      const d = new Date(item.timestamp);
+      return isNaN(d.getTime()) ? item.timestamp : d.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    });
+
+    const datasets = [];
+
+    if (selectedInterfaceFilter === 'all') {
+      // Show per-interface curves
+      monitoredInterfaces.forEach(iface => {
+        const colors = getInterfaceColors(iface);
+        datasets.push({
+          label: `${iface} (RX)`,
+          data: timeData.map(item => item[iface] ? item[iface].rx_bps : (item.rx_bps || 0)),
+          borderColor: colors.rx.line,
+          backgroundColor: colors.rx.bg,
+          fill: false
+        });
+        datasets.push({
+          label: `${iface} (TX)`,
+          data: timeData.map(item => item[iface] ? item[iface].tx_bps : (item.tx_bps || 0)),
+          borderColor: colors.tx.line,
+          borderDash: [4, 4],
+          backgroundColor: colors.tx.bg,
+          fill: false
+        });
+      });
+    } else {
+      // Single interface detailed view
+      const colors = getInterfaceColors(selectedInterfaceFilter);
       datasets.push({
-        label: `${iface} (RX)`,
-        data: timeData.map(item => item[iface] ? item[iface].rx_bps : 0),
+        label: `${selectedInterfaceFilter} Download (RX)`,
+        data: timeData.map(item => item.rx_bps || 0),
         borderColor: colors.rx.line,
         backgroundColor: colors.rx.bg,
-        fill: false
+        fill: true
       });
       datasets.push({
-        label: `${iface} (TX)`,
-        data: timeData.map(item => item[iface] ? item[iface].tx_bps : 0),
+        label: `${selectedInterfaceFilter} Upload (TX)`,
+        data: timeData.map(item => item.tx_bps || 0),
         borderColor: colors.tx.line,
-        borderDash: [4, 4],
+        borderDash: [3, 3],
         backgroundColor: colors.tx.bg,
         fill: false
       });
-    });
-  } else {
-    // Single interface detailed view
-    const colors = COLOR_SCHEME[selectedInterfaceFilter] || COLOR_SCHEME.total;
-    datasets.push({
-      label: `Download (RX)`,
-      data: timeData.map(item => item.rx_bps || 0),
-      borderColor: colors.rx.line,
-      backgroundColor: colors.rx.bg,
-      fill: true
-    });
-    datasets.push({
-      label: `Upload (TX)`,
-      data: timeData.map(item => item.tx_bps || 0),
-      borderColor: colors.tx.line,
-      borderDash: [3, 3],
-      backgroundColor: colors.tx.bg,
-      fill: false
-    });
-  }
+    }
 
-  trafficChart.data.labels = labels;
-  trafficChart.data.datasets = datasets;
-  trafficChart.update('none');
+    trafficChart.data.labels = labels;
+    trafficChart.data.datasets = datasets;
+    trafficChart.update('none');
+  }
 }
 
-// Generator for Demo/Simulation Mode
-function handleDemoData() {
+/**
+ * Demo / Simulation Mode Generators
+ */
+function handleDemoCardsUpdate() {
   const now = new Date();
+  const interfacesData = monitoredInterfaces.map((iface, i) => {
+    const baseRx = 80000000 + (i * 30000000);
+    const baseTx = 10000000 + (i * 5000000);
+    const rx = Math.floor(baseRx + Math.random() * 25000000);
+    const tx = Math.floor(baseTx + Math.random() * 4000000);
+    return { name: iface, status: 'running', rx_bps: rx, tx_bps: tx };
+  });
 
-  // Generate dynamic realistic values
-  const ether1Rx = Math.floor(110000000 + Math.random() * 35000000); // 110-145 Mbps
-  const ether1Tx = Math.floor(15000000 + Math.random() * 8000000);   // 15-23 Mbps
-
-  const ether2Rx = Math.floor(70000000 + Math.random() * 25000000);  // 70-95 Mbps
-  const ether2Tx = Math.floor(10000000 + Math.random() * 5000000);   // 10-15 Mbps
-
-  const ether3Rx = Math.floor(35000000 + Math.random() * 15000000);  // 35-50 Mbps
-  const ether3Tx = Math.floor(5000000 + Math.random() * 4000000);    // 5-9 Mbps
-
-  const interfacesData = [
-    { name: 'ether1-BAROKAH', status: 'running', rx_bps: ether1Rx, tx_bps: ether1Tx },
-    { name: 'ether2-BIZ', status: 'running', rx_bps: ether2Rx, tx_bps: ether2Tx },
-    { name: 'ether3-WAHED', status: 'running', rx_bps: ether3Rx, tx_bps: ether3Tx }
-  ];
-
-  // Store in mock memory history
   pushMockHistory(now.toISOString(), interfacesData);
-
   updateStatusUI('online', now.toISOString());
   updateInterfacesUI(interfacesData);
-  updateChartData();
 }
 
 function pushMockHistory(timestamp, interfacesData) {
-  if (!mockHistoricalData.points) mockHistoricalData.points = [];
-
   const entry = { timestamp };
   interfacesData.forEach(iface => {
     entry[iface.name] = { rx_bps: iface.rx_bps, tx_bps: iface.tx_bps };
   });
 
-  mockHistoricalData.points.push(entry);
+  mockHistoricalPoints.push(entry);
 
-  // Keep last 100 points
-  if (mockHistoricalData.points.length > 100) {
-    mockHistoricalData.points.shift();
+  if (mockHistoricalPoints.length > 500) {
+    mockHistoricalPoints.shift();
   }
 }
 
 function getDemoTrafficData(ifaceFilter, periodStr) {
-  if (!mockHistoricalData.points || mockHistoricalData.points.length === 0) {
-    // Pre-populate initial mock points if empty
+  if (mockHistoricalPoints.length === 0) {
     const now = Date.now();
-    mockHistoricalData.points = [];
-    for (let i = 20; i >= 0; i--) {
-      const t = new Date(now - i * 5000).toISOString();
-      pushMockHistory(t, [
-        { name: 'ether1-BAROKAH', rx_bps: 120000000 + Math.random() * 20000000, tx_bps: 18000000 + Math.random() * 4000000 },
-        { name: 'ether2-BIZ', rx_bps: 80000000 + Math.random() * 15000000, tx_bps: 12000000 + Math.random() * 3000000 },
-        { name: 'ether3-WAHED', rx_bps: 40000000 + Math.random() * 10000000, tx_bps: 7000000 + Math.random() * 2000000 }
-      ]);
+    const periodSec = parsePeriodToSeconds(periodStr);
+    const stepSec = Math.max(5, Math.floor(periodSec / 60));
+    const totalPoints = 60;
+
+    for (let i = totalPoints; i >= 0; i--) {
+      const t = new Date(now - i * stepSec * 1000).toISOString();
+      const interfacesData = monitoredInterfaces.map((iface, idx) => ({
+        name: iface,
+        rx_bps: Math.floor(60000000 + (idx * 40000000) + Math.random() * 30000000),
+        tx_bps: Math.floor(8000000 + (idx * 5000000) + Math.random() * 5000000)
+      }));
+      pushMockHistory(t, interfacesData);
     }
   }
 
-  const raw = mockHistoricalData.points;
+  const raw = mockHistoricalPoints;
   if (ifaceFilter === 'all') {
     return raw;
   }

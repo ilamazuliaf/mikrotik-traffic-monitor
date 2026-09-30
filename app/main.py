@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse
 from app.config import config
 from app.database.database import init_db
 from app.mikrotik.monitor import monitor_worker
+from app.api.config_api import router as config_router
 from app.api.status import router as status_router
 from app.api.interfaces import router as interfaces_router
 from app.api.traffic import router as traffic_router
@@ -23,6 +24,7 @@ logger = logging.getLogger("mikrotik_monitor")
 async def lifespan(app: FastAPI):
     # Startup tasks
     logger.info("Initializing MikroTik Traffic Monitor application...")
+    config.validate_config()
     init_db()
     monitor_worker.start()
     yield
@@ -32,8 +34,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="MikroTik Traffic Monitor",
-    version="1.0.0",
-    description="Realtime interface traffic monitor for STB Ubuntu",
+    version="1.1.0",
+    description="Realtime & Historical interface traffic monitor for STB Ubuntu",
     lifespan=lifespan
 )
 
@@ -45,6 +47,7 @@ if static_dir.exists():
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 # Include API Routers
+app.include_router(config_router, prefix="/api", tags=["Config"])
 app.include_router(status_router, prefix="/api", tags=["Status"])
 app.include_router(interfaces_router, prefix="/api", tags=["Interfaces"])
 app.include_router(traffic_router, prefix="/api", tags=["Traffic"])
