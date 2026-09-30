@@ -1,10 +1,10 @@
 /**
- * MikroTik Traffic Monitor - Frontend Engine v1.1.1
+ * MikroTik Traffic Monitor - Frontend Engine v1.1.2
  * Fully dynamic interface & graph period management following .env via /api/config.
- * Supports hot-reloading configurations, dynamic cards, and Realtime vs Historical Snapshot modes.
+ * Defensively guarded against uncaught JS errors, network delays, or missing Chart.js library.
  */
 
-// Default Fallback Configuration (if backend /api/config is unreachable at start)
+// Default Fallback Configuration
 const DEFAULT_CONFIG = {
   interfaces: ['ether1-BAROKAH', 'ether2-BIZ', 'ether3-WAHED'],
   graph_periods: [
@@ -24,9 +24,9 @@ const DEFAULT_CONFIG = {
 // Application State
 let appConfig = { ...DEFAULT_CONFIG };
 let monitoredInterfaces = [...DEFAULT_CONFIG.interfaces];
-let selectedInterfaceFilter = 'all'; // 'all' or interface name
+let selectedInterfaceFilter = 'all';
 let selectedPeriodFilter = '15m';
-let currentMode = 'realtime'; // 'realtime' or 'historical'
+let currentMode = 'realtime';
 let pollIntervalSeconds = 5;
 
 let countdownTimer = null;
@@ -48,9 +48,6 @@ const PRESET_COLORS = {
   'total':          { rx: { line: '#38bdf8', bg: 'rgba(56, 189, 248, 0.15)' }, tx: { line: '#c084fc', bg: 'rgba(192, 132, 252, 0.15)' } }
 };
 
-/**
- * Generates consistent colors for any dynamic interface name
- */
 function getInterfaceColors(ifaceName) {
   if (PRESET_COLORS[ifaceName]) {
     return PRESET_COLORS[ifaceName];
@@ -68,9 +65,6 @@ function getInterfaceColors(ifaceName) {
   };
 }
 
-/**
- * Bandwidth calculation & formatting
- */
 function splitBandwidth(bps) {
   if (bps === null || bps === undefined || isNaN(bps) || bps < 0) {
     return { val: '0', unit: 'bps' };
@@ -92,9 +86,6 @@ function formatBandwidth(bps) {
   return `${parts.val} ${parts.unit}`;
 }
 
-/**
- * Parses time string (e.g. "5m", "10m", "1h", "24h", "7d") into seconds
- */
 function parsePeriodToSeconds(periodStr) {
   if (!periodStr) return 900;
   const match = String(periodStr).trim().match(/^(\d+)([mhdwy])$/i);
@@ -109,9 +100,6 @@ function parsePeriodToSeconds(periodStr) {
   return 900;
 }
 
-/**
- * Formats period code into human readable label
- */
 function getPeriodLabel(periodStr) {
   if (!periodStr) return periodStr;
   const match = String(periodStr).trim().match(/^(\d+)([mhdwy])$/i);
@@ -126,9 +114,6 @@ function getPeriodLabel(periodStr) {
   return periodStr;
 }
 
-/**
- * Determines whether a period is realtime or historical snapshot
- */
 function isPeriodRealtime(periodValue) {
   const periods = appConfig.graph_periods || DEFAULT_CONFIG.graph_periods;
   const periodObj = periods.find(p => (typeof p === 'string' ? p : p.value) === periodValue);
@@ -142,23 +127,35 @@ function isPeriodRealtime(periodValue) {
   return periodSec <= maxSec;
 }
 
-// Initialization on DOM ready
+// Initialization on DOM ready with defensive guards
 document.addEventListener('DOMContentLoaded', async () => {
-  initChart();
-  initDemoToggle();
-  initRefreshButton();
-  initVisibilityListener();
+  try {
+    initChart();
+  } catch (e) {
+    console.warn('initChart safe error:', e);
+  }
 
-  // Load dynamic configuration from backend
-  await loadConfig();
+  try {
+    initDemoToggle();
+    initRefreshButton();
+    initVisibilityListener();
+  } catch (e) {
+    console.warn('initControls safe error:', e);
+  }
 
-  // Initial Data Fetch
-  await applyFilterChange(true);
+  try {
+    await loadConfig();
+  } catch (e) {
+    console.warn('loadConfig safe error:', e);
+  }
+
+  try {
+    await applyFilterChange(true);
+  } catch (e) {
+    console.warn('applyFilterChange safe error:', e);
+  }
 });
 
-/**
- * Loads dynamic configuration from /api/config
- */
 async function loadConfig() {
   try {
     const res = await fetch('/api/config');
@@ -188,9 +185,6 @@ async function loadConfig() {
   updateOfflineBanner();
 }
 
-/**
- * Dynamically updates configuration if backend settings (.env) changed
- */
 function updateConfigIfChanged(newConfig) {
   if (!newConfig) return;
 
@@ -216,9 +210,6 @@ function updateConfigIfChanged(newConfig) {
   }
 }
 
-/**
- * Dynamically builds interface cards based on MONITORED_INTERFACES
- */
 function renderDynamicCards() {
   const container = document.getElementById('interfacesGrid');
   if (!container) return;
@@ -227,7 +218,7 @@ function renderDynamicCards() {
   const isSame = currentCardIds.length === monitoredInterfaces.length &&
                  monitoredInterfaces.every((val, idx) => val === currentCardIds[idx]);
 
-  if (isSame) return; // Skip re-rendering if card structure hasn't changed
+  if (isSame) return; // Skip re-rendering if cards match
 
   container.innerHTML = '';
   sparklineHistory = {};
@@ -286,11 +277,7 @@ function renderDynamicCards() {
   });
 }
 
-/**
- * Dynamically builds filter button groups for interfaces & periods
- */
 function renderDynamicFilters() {
-  // Interface filter group
   const interfaceGroup = document.getElementById('filterInterfaceGroup');
   if (interfaceGroup) {
     if (selectedInterfaceFilter !== 'all' && !monitoredInterfaces.includes(selectedInterfaceFilter)) {
@@ -316,7 +303,6 @@ function renderDynamicFilters() {
     });
   }
 
-  // Period filter group
   const periodGroup = document.getElementById('filterPeriodGroup');
   if (periodGroup) {
     const periods = appConfig.graph_periods || DEFAULT_CONFIG.graph_periods;
@@ -362,9 +348,6 @@ function onPeriodFilterSelect(periodVal, clickBtn) {
   applyFilterChange();
 }
 
-/**
- * Handles switching between Realtime vs Historical Snapshot mode
- */
 async function applyFilterChange(isInitial = false) {
   const isRealtime = isPeriodRealtime(selectedPeriodFilter);
   currentMode = isRealtime ? 'realtime' : 'historical';
@@ -381,9 +364,6 @@ async function applyFilterChange(isInitial = false) {
   await fetchChartData();
 }
 
-/**
- * Updates UI Mode Badge (LIVE vs HISTORICAL) & Refresh Button visibility
- */
 function updateModeBadgeUI() {
   const badge = document.getElementById('graphModeBadge');
   const badgeText = document.getElementById('graphModeText');
@@ -415,9 +395,6 @@ function updateModeBadgeUI() {
   }
 }
 
-/**
- * Manual Refresh Button for Historical Mode
- */
 function initRefreshButton() {
   const btn = document.getElementById('btnRefreshHistorical');
   if (btn) {
@@ -431,9 +408,6 @@ function initRefreshButton() {
   }
 }
 
-/**
- * Polling progress bar & timer control
- */
 function startPolling() {
   stopPolling();
 
@@ -468,9 +442,6 @@ function stopPolling() {
   if (progressBar) progressBar.style.width = '0%';
 }
 
-/**
- * Tab Visibility Optimization
- */
 function initVisibilityListener() {
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
@@ -515,9 +486,6 @@ function updateOfflineBanner() {
   }
 }
 
-/**
- * Fetches router status, config & interface cards data (RX/TX bps)
- */
 async function fetchDashboardData() {
   if (isManualDemoMode) {
     handleDemoCardsUpdate();
@@ -547,9 +515,7 @@ async function fetchDashboardData() {
     const statusData = await statusRes.json();
     const interfacesData = await interfacesRes.json();
 
-    // Hot-reload dynamic config from .env if updated
     updateConfigIfChanged(configData);
-
     updateStatusUI(statusData.mikrotik, statusData.last_update);
     updateInterfacesUI(interfacesData.interfaces);
 
@@ -667,80 +633,86 @@ function updateSparkline(ifaceName, rxBps, txBps) {
   `;
 }
 
-/**
- * Initializes Chart.js instance
- */
 function initChart() {
   const ctx = document.getElementById('trafficChartContainer');
   if (!ctx) return;
 
-  Chart.defaults.color = '#9ca3af';
-  Chart.defaults.font.family = "'Plus Jakarta Sans', sans-serif";
+  if (typeof Chart === 'undefined') {
+    console.warn('Chart.js library not available.');
+    return;
+  }
 
-  trafficChart = new Chart(ctx.getContext('2d'), {
-    type: 'line',
-    data: {
-      labels: [],
-      datasets: []
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      animation: false,
-      interaction: {
-        mode: 'index',
-        intersect: false
+  try {
+    Chart.defaults.color = '#9ca3af';
+    Chart.defaults.font.family = "'Plus Jakarta Sans', sans-serif";
+
+    trafficChart = new Chart(ctx.getContext('2d'), {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: []
       },
-      plugins: {
-        legend: {
-          position: 'top',
-          align: 'end',
-          labels: {
-            usePointStyle: true,
-            boxWidth: 8,
-            boxHeight: 8,
-            padding: 16,
-            font: { size: 12, weight: '600' }
-          }
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        interaction: {
+          mode: 'index',
+          intersect: false
         },
-        tooltip: {
-          backgroundColor: 'rgba(15, 23, 42, 0.95)',
-          borderColor: 'rgba(255, 255, 255, 0.1)',
-          borderWidth: 1,
-          padding: 12,
-          titleFont: { size: 13, weight: '700' },
-          bodyFont: { size: 12 },
-          callbacks: {
-            label: function(context) {
-              const label = context.dataset.label || '';
-              const value = context.parsed.y;
-              return `${label}: ${formatBandwidth(value)}`;
+        plugins: {
+          legend: {
+            position: 'top',
+            align: 'end',
+            labels: {
+              usePointStyle: true,
+              boxWidth: 8,
+              boxHeight: 8,
+              padding: 16,
+              font: { size: 12, weight: '600' }
+            }
+          },
+          tooltip: {
+            backgroundColor: 'rgba(15, 23, 42, 0.95)',
+            borderColor: 'rgba(255, 255, 255, 0.1)',
+            borderWidth: 1,
+            padding: 12,
+            titleFont: { size: 13, weight: '700' },
+            bodyFont: { size: 12 },
+            callbacks: {
+              label: function(context) {
+                const label = context.dataset.label || '';
+                const value = context.parsed.y;
+                return `${label}: ${formatBandwidth(value)}`;
+              }
             }
           }
-        }
-      },
-      scales: {
-        x: {
-          grid: { color: 'rgba(255, 255, 255, 0.04)' },
-          ticks: { maxRotation: 0, font: { size: 11 } }
         },
-        y: {
-          beginAtZero: true,
-          grid: { color: 'rgba(255, 255, 255, 0.04)' },
-          ticks: {
-            font: { size: 11 },
-            callback: function(value) {
-              return formatBandwidth(value);
+        scales: {
+          x: {
+            grid: { color: 'rgba(255, 255, 255, 0.04)' },
+            ticks: { maxRotation: 0, font: { size: 11 } }
+          },
+          y: {
+            beginAtZero: true,
+            grid: { color: 'rgba(255, 255, 255, 0.04)' },
+            ticks: {
+              font: { size: 11 },
+              callback: function(value) {
+                return formatBandwidth(value);
+              }
             }
           }
+        },
+        elements: {
+          line: { tension: 0.3, borderWidth: 2 },
+          point: { radius: 0, hoverRadius: 5 }
         }
-      },
-      elements: {
-        line: { tension: 0.3, borderWidth: 2 },
-        point: { radius: 0, hoverRadius: 5 }
       }
-    }
-  });
+    });
+  } catch (err) {
+    console.warn('initChart error:', err);
+  }
 }
 
 function setChartOverlay(show, message = '', type = 'loading') {
@@ -759,11 +731,11 @@ function setChartOverlay(show, message = '', type = 'loading') {
   }
 }
 
-/**
- * Fetches & renders graph data from backend API /api/traffic
- */
 async function fetchChartData(forceRefresh = false) {
-  if (!trafficChart) return;
+  if (!trafficChart) {
+    initChart();
+    if (!trafficChart) return;
+  }
 
   if (currentMode === 'historical') {
     setChartOverlay(true, 'Loading historical traffic data...', 'loading');
@@ -868,9 +840,6 @@ async function fetchChartData(forceRefresh = false) {
   }
 }
 
-/**
- * Demo / Simulation Mode Generators
- */
 function handleDemoCardsUpdate() {
   const now = new Date();
   const interfacesData = monitoredInterfaces.map((iface, i) => {
