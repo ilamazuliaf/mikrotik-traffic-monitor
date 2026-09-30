@@ -52,11 +52,8 @@ app.include_router(status_router, prefix="/api", tags=["Status"])
 app.include_router(interfaces_router, prefix="/api", tags=["Interfaces"])
 app.include_router(traffic_router, prefix="/api", tags=["Traffic"])
 
-# Dashboard HTML Route
+# Dashboard HTML Route (Single Source of Truth)
 @app.get("/", response_class=FileResponse)
 def read_root():
-    template_file = BASE_DIR / "app" / "templates" / "index.html"
-    if template_file.exists():
-        return FileResponse(str(template_file))
     index_file = BASE_DIR / "index.html"
     return FileResponse(str(index_file))
