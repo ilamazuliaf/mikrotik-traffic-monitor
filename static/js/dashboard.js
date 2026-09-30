@@ -1,10 +1,10 @@
 /**
- * MikroTik Traffic Monitor - Frontend Engine v1.1.0
- * Fully dynamic interface & graph period management with Realtime vs Historical Snapshot modes.
- * Compatible with FastAPI backend & standalone preview/demo mode.
+ * MikroTik Traffic Monitor - Frontend Engine v1.1.1
+ * Fully dynamic interface & graph period management following .env via /api/config.
+ * Supports hot-reloading configurations, dynamic cards, and Realtime vs Historical Snapshot modes.
  */
 
-// Default Fallback Configuration (if backend /api/config is unreachable)
+// Default Fallback Configuration (if backend /api/config is unreachable at start)
 const DEFAULT_CONFIG = {
   interfaces: ['ether1-BAROKAH', 'ether2-BIZ', 'ether3-WAHED'],
   graph_periods: [
@@ -23,9 +23,9 @@ const DEFAULT_CONFIG = {
 
 // Application State
 let appConfig = { ...DEFAULT_CONFIG };
-let monitoredInterfaces = [];
+let monitoredInterfaces = [...DEFAULT_CONFIG.interfaces];
 let selectedInterfaceFilter = 'all'; // 'all' or interface name
-let selectedPeriodFilter = '15m'; // e.g. '5m', '15m', '30m', '1h', '6h', '12h', '24h'
+let selectedPeriodFilter = '15m';
 let currentMode = 'realtime'; // 'realtime' or 'historical'
 let pollIntervalSeconds = 5;
 
@@ -35,28 +35,17 @@ let lastSnapshotTimestamp = null;
 let trafficChart = null;
 let sparklineHistory = {};
 
-// Demo/Mock mode state
-let isDemoMode = false;
+// Demo/Mock mode states
+let isManualDemoMode = false;
+let isAutoDemoFallback = false;
 let mockHistoricalPoints = [];
 
-// Pre-defined visual palette with fallback generator for dynamic interfaces
+// Visual color palette generator for dynamic interfaces
 const PRESET_COLORS = {
-  'ether1-BAROKAH': {
-    rx: { line: '#06b6d4', bg: 'rgba(6, 182, 212, 0.15)' },
-    tx: { line: '#a855f7', bg: 'rgba(168, 85, 247, 0.15)' }
-  },
-  'ether2-BIZ': {
-    rx: { line: '#3b82f6', bg: 'rgba(59, 130, 246, 0.15)' },
-    tx: { line: '#ec4899', bg: 'rgba(236, 72, 153, 0.15)' }
-  },
-  'ether3-WAHED': {
-    rx: { line: '#10b981', bg: 'rgba(16, 185, 129, 0.15)' },
-    tx: { line: '#f59e0b', bg: 'rgba(245, 158, 11, 0.15)' }
-  },
-  'total': {
-    rx: { line: '#38bdf8', bg: 'rgba(56, 189, 248, 0.15)' },
-    tx: { line: '#c084fc', bg: 'rgba(192, 132, 252, 0.15)' }
-  }
+  'ether1-BAROKAH': { rx: { line: '#06b6d4', bg: 'rgba(6, 182, 212, 0.15)' }, tx: { line: '#a855f7', bg: 'rgba(168, 85, 247, 0.15)' } },
+  'ether2-BIZ':     { rx: { line: '#3b82f6', bg: 'rgba(59, 130, 246, 0.15)' }, tx: { line: '#ec4899', bg: 'rgba(236, 72, 153, 0.15)' } },
+  'ether3-WAHED':   { rx: { line: '#10b981', bg: 'rgba(16, 185, 129, 0.15)' }, tx: { line: '#f59e0b', bg: 'rgba(245, 158, 11, 0.15)' } },
+  'total':          { rx: { line: '#38bdf8', bg: 'rgba(56, 189, 248, 0.15)' }, tx: { line: '#c084fc', bg: 'rgba(192, 132, 252, 0.15)' } }
 };
 
 /**
@@ -66,7 +55,6 @@ function getInterfaceColors(ifaceName) {
   if (PRESET_COLORS[ifaceName]) {
     return PRESET_COLORS[ifaceName];
   }
-  // Deterministic HSL color generator based on name hash
   let hash = 0;
   for (let i = 0; i < ifaceName.length; i++) {
     hash = ifaceName.charCodeAt(i) + ((hash << 5) - hash);
@@ -82,11 +70,6 @@ function getInterfaceColors(ifaceName) {
 
 /**
  * Bandwidth calculation & formatting
- * Thresholds:
- * < 1 Kbps      => bps
- * 1 Kbps-999 Kbps => Kbps
- * 1 Mbps-999 Mbps => Mbps
- * >= 1 Gbps     => Gbps
  */
 function splitBandwidth(bps) {
   if (bps === null || bps === undefined || isNaN(bps) || bps < 0) {
@@ -110,32 +93,36 @@ function formatBandwidth(bps) {
 }
 
 /**
- * Parses time string (e.g. "5m", "1h", "24h", "7d") into seconds
+ * Parses time string (e.g. "5m", "10m", "1h", "24h", "7d") into seconds
  */
 function parsePeriodToSeconds(periodStr) {
   if (!periodStr) return 900;
-  const match = periodStr.match(/^(\d+)([mhd])$/i);
+  const match = String(periodStr).trim().match(/^(\d+)([mhdwy])$/i);
   if (!match) return 900;
   const val = parseInt(match[1], 10);
   const unit = match[2].toLowerCase();
   if (unit === 'm') return val * 60;
   if (unit === 'h') return val * 3600;
   if (unit === 'd') return val * 86400;
+  if (unit === 'w') return val * 604800;
+  if (unit === 'y') return val * 31536000;
   return 900;
 }
 
 /**
- * Formats period code into human readable Indonesian label
+ * Formats period code into human readable label
  */
 function getPeriodLabel(periodStr) {
   if (!periodStr) return periodStr;
-  const match = periodStr.match(/^(\d+)([mhd])$/i);
+  const match = String(periodStr).trim().match(/^(\d+)([mhdwy])$/i);
   if (!match) return periodStr;
   const val = match[1];
   const unit = match[2].toLowerCase();
   if (unit === 'm') return `${val} Menit`;
   if (unit === 'h') return `${val} Jam`;
   if (unit === 'd') return `${val} Hari`;
+  if (unit === 'w') return `${val} Minggu`;
+  if (unit === 'y') return `${val} Tahun`;
   return periodStr;
 }
 
@@ -143,12 +130,13 @@ function getPeriodLabel(periodStr) {
  * Determines whether a period is realtime or historical snapshot
  */
 function isPeriodRealtime(periodValue) {
-  // Check if period object explicitly defines mode
-  const periodObj = (appConfig.graph_periods || []).find(p => p.value === periodValue);
-  if (periodObj && periodObj.mode) {
+  const periods = appConfig.graph_periods || DEFAULT_CONFIG.graph_periods;
+  const periodObj = periods.find(p => (typeof p === 'string' ? p : p.value) === periodValue);
+
+  if (periodObj && typeof periodObj === 'object' && periodObj.mode) {
     return periodObj.mode === 'realtime';
   }
-  // Fallback to comparing duration against realtime_max
+
   const maxSec = parsePeriodToSeconds(appConfig.realtime_max || '30m');
   const periodSec = parsePeriodToSeconds(periodValue);
   return periodSec <= maxSec;
@@ -177,30 +165,55 @@ async function loadConfig() {
     if (res.ok) {
       const data = await res.json();
       appConfig = { ...DEFAULT_CONFIG, ...data };
+      isAutoDemoFallback = false;
     } else {
-      console.warn('/api/config not available, using default configuration');
-      setDemoFallbackMode(true);
+      if (!isManualDemoMode) isAutoDemoFallback = true;
     }
   } catch (err) {
-    console.warn('/api/config request failed:', err);
-    setDemoFallbackMode(true);
+    if (!isManualDemoMode) isAutoDemoFallback = true;
   }
 
   monitoredInterfaces = appConfig.interfaces || DEFAULT_CONFIG.interfaces;
   pollIntervalSeconds = appConfig.poll_interval || 5;
 
-  // Set default period from config if valid, or fallback to first period
   const periods = appConfig.graph_periods || DEFAULT_CONFIG.graph_periods;
-  const defaultP = appConfig.default_period;
-  if (defaultP && periods.some(p => p.value === defaultP)) {
-    selectedPeriodFilter = defaultP;
-  } else if (periods.length > 0) {
-    selectedPeriodFilter = periods[0].value;
+  const periodValues = periods.map(p => (typeof p === 'string' ? p : p.value));
+
+  if (!periodValues.includes(selectedPeriodFilter)) {
+    selectedPeriodFilter = appConfig.default_period || periodValues[0] || '15m';
   }
 
-  // Render dynamic interface cards & filter buttons
   renderDynamicCards();
   renderDynamicFilters();
+  updateOfflineBanner();
+}
+
+/**
+ * Dynamically updates configuration if backend settings (.env) changed
+ */
+function updateConfigIfChanged(newConfig) {
+  if (!newConfig) return;
+
+  const newInterfaces = newConfig.interfaces || [];
+  const newPeriods = newConfig.graph_periods || [];
+
+  const interfacesChanged = JSON.stringify(newInterfaces) !== JSON.stringify(appConfig.interfaces);
+  const periodsChanged = JSON.stringify(newPeriods) !== JSON.stringify(appConfig.graph_periods);
+  const defaultChanged = newConfig.default_period !== appConfig.default_period;
+
+  if (interfacesChanged || periodsChanged || defaultChanged) {
+    appConfig = { ...DEFAULT_CONFIG, ...newConfig };
+    monitoredInterfaces = appConfig.interfaces || DEFAULT_CONFIG.interfaces;
+    pollIntervalSeconds = appConfig.poll_interval || 5;
+
+    renderDynamicCards();
+    renderDynamicFilters();
+
+    const isRealtime = isPeriodRealtime(selectedPeriodFilter);
+    currentMode = isRealtime ? 'realtime' : 'historical';
+    updateModeBadgeUI();
+    fetchChartData();
+  }
 }
 
 /**
@@ -210,22 +223,33 @@ function renderDynamicCards() {
   const container = document.getElementById('interfacesGrid');
   if (!container) return;
 
+  const currentCardIds = Array.from(container.querySelectorAll('.card-interface')).map(c => c.id.replace('card-', ''));
+  const isSame = currentCardIds.length === monitoredInterfaces.length &&
+                 monitoredInterfaces.every((val, idx) => val === currentCardIds[idx]);
+
+  if (isSame) return; // Skip re-rendering if card structure hasn't changed
+
   container.innerHTML = '';
   sparklineHistory = {};
 
   monitoredInterfaces.forEach((iface, idx) => {
     sparklineHistory[iface] = { rx: [], tx: [] };
 
-    // Format index for ETH icon (e.g. ether1-BAROKAH => ETH1)
-    let ethNum = idx + 1;
-    const match = iface.match(/ether(\d+)/i);
-    if (match) ethNum = match[1];
+    let iconLabel = `IF${idx + 1}`;
+    const ethMatch = iface.match(/ether(\d+)/i);
+    const wlanMatch = iface.match(/wlan(\d+)/i);
+    const vlanMatch = iface.match(/vlan(\d+)/i);
+
+    if (ethMatch) iconLabel = `ETH${ethMatch[1]}`;
+    else if (wlanMatch) iconLabel = `WLAN${wlanMatch[1]}`;
+    else if (vlanMatch) iconLabel = `VLAN${vlanMatch[1]}`;
+    else if (iface.length <= 6) iconLabel = iface.toUpperCase();
 
     const cardHtml = `
       <article class="card-interface" id="card-${iface}">
         <div class="card-header">
           <div class="card-title">
-            <div class="icon-eth">ETH${ethNum}</div>
+            <div class="icon-eth">${iconLabel}</div>
             <h3>${iface}</h3>
           </div>
           <span class="card-status running">RUNNING</span>
@@ -269,6 +293,10 @@ function renderDynamicFilters() {
   // Interface filter group
   const interfaceGroup = document.getElementById('filterInterfaceGroup');
   if (interfaceGroup) {
+    if (selectedInterfaceFilter !== 'all' && !monitoredInterfaces.includes(selectedInterfaceFilter)) {
+      selectedInterfaceFilter = 'all';
+    }
+
     interfaceGroup.innerHTML = '';
 
     const allBtn = document.createElement('button');
@@ -291,8 +319,14 @@ function renderDynamicFilters() {
   // Period filter group
   const periodGroup = document.getElementById('filterPeriodGroup');
   if (periodGroup) {
-    periodGroup.innerHTML = '';
     const periods = appConfig.graph_periods || DEFAULT_CONFIG.graph_periods;
+    const periodValues = periods.map(p => (typeof p === 'string' ? p : p.value));
+
+    if (!periodValues.includes(selectedPeriodFilter)) {
+      selectedPeriodFilter = appConfig.default_period || periodValues[0] || '15m';
+    }
+
+    periodGroup.innerHTML = '';
 
     periods.forEach(pObj => {
       const val = typeof pObj === 'string' ? pObj : pObj.value;
@@ -382,7 +416,7 @@ function updateModeBadgeUI() {
 }
 
 /**
- * Manual Refresh Button for Historical Mode (PRD Section 15)
+ * Manual Refresh Button for Historical Mode
  */
 function initRefreshButton() {
   const btn = document.getElementById('btnRefreshHistorical');
@@ -398,12 +432,12 @@ function initRefreshButton() {
 }
 
 /**
- * Polling progress bar & timer control (PRD Section 46)
+ * Polling progress bar & timer control
  */
 function startPolling() {
   stopPolling();
 
-  if (document.hidden) return; // PRD Section 47: Pause when tab in background
+  if (document.hidden) return;
 
   const progressBar = document.getElementById('pollingBar');
   const stepMs = 100;
@@ -435,7 +469,7 @@ function stopPolling() {
 }
 
 /**
- * Tab Visibility Optimization (PRD Section 47)
+ * Tab Visibility Optimization
  */
 function initVisibilityListener() {
   document.addEventListener('visibilitychange', () => {
@@ -455,57 +489,73 @@ function initDemoToggle() {
   const toggle = document.getElementById('demoToggle');
   if (toggle) {
     toggle.addEventListener('change', (e) => {
-      isDemoMode = e.target.checked;
+      isManualDemoMode = e.target.checked;
+      updateOfflineBanner();
       applyFilterChange();
     });
   }
 }
 
-function setDemoFallbackMode(enabled) {
+function updateOfflineBanner() {
   const toggle = document.getElementById('demoToggle');
   const banner = document.getElementById('offlineBanner');
-  if (toggle && !toggle.checked && enabled) {
-    toggle.checked = true;
-    isDemoMode = true;
-    if (banner) {
-      banner.querySelector('.banner-msg').textContent = 'Backend FastAPI belum aktif. Menjalankan Mode Simulasi Realtime.';
-      banner.classList.add('active');
-    }
-  } else if (!enabled && banner) {
+  if (!banner) return;
+
+  if (isManualDemoMode) {
+    if (toggle) toggle.checked = true;
+    banner.querySelector('.banner-msg').textContent = 'Mode Simulasi Manual Aktif.';
+    banner.classList.add('active');
+  } else if (isAutoDemoFallback) {
+    if (toggle) toggle.checked = true;
+    banner.querySelector('.banner-msg').textContent = 'Backend FastAPI belum terhubung. Menjalankan Mode Simulasi Realtime.';
+    banner.classList.add('active');
+  } else {
+    if (toggle) toggle.checked = false;
     banner.classList.remove('active');
   }
 }
 
 /**
- * Fetches router status & interface cards data (RX/TX bps)
+ * Fetches router status, config & interface cards data (RX/TX bps)
  */
 async function fetchDashboardData() {
-  if (isDemoMode) {
+  if (isManualDemoMode) {
     handleDemoCardsUpdate();
     return;
   }
 
   try {
-    const [statusRes, interfacesRes] = await Promise.all([
+    const [configRes, statusRes, interfacesRes] = await Promise.all([
+      fetch('/api/config').catch(() => null),
       fetch('/api/status').catch(() => null),
       fetch('/api/interfaces').catch(() => null)
     ]);
 
-    if (!statusRes || !statusRes.ok || !interfacesRes || !interfacesRes.ok) {
-      setDemoFallbackMode(true);
+    if (!configRes || !configRes.ok || !statusRes || !statusRes.ok || !interfacesRes || !interfacesRes.ok) {
+      isAutoDemoFallback = true;
+      updateOfflineBanner();
       handleDemoCardsUpdate();
       return;
     }
 
-    setDemoFallbackMode(false);
+    if (isAutoDemoFallback) {
+      isAutoDemoFallback = false;
+      updateOfflineBanner();
+    }
+
+    const configData = await configRes.json();
     const statusData = await statusRes.json();
     const interfacesData = await interfacesRes.json();
+
+    // Hot-reload dynamic config from .env if updated
+    updateConfigIfChanged(configData);
 
     updateStatusUI(statusData.mikrotik, statusData.last_update);
     updateInterfacesUI(interfacesData.interfaces);
 
   } catch (err) {
-    setDemoFallbackMode(true);
+    isAutoDemoFallback = true;
+    updateOfflineBanner();
     handleDemoCardsUpdate();
   }
 }
@@ -522,7 +572,7 @@ function updateStatusUI(status, lastUpdateStr) {
     if (statusPill) statusPill.className = 'status-pill online';
     if (statusText) statusText.textContent = 'ONLINE';
     lastSuccessfulUpdate = formattedTime;
-    if (offlineBanner && !isDemoMode) offlineBanner.classList.remove('active');
+    if (offlineBanner && !isManualDemoMode && !isAutoDemoFallback) offlineBanner.classList.remove('active');
   } else if (status === 'offline') {
     if (statusPill) statusPill.className = 'status-pill offline';
     if (statusText) statusText.textContent = 'OFFLINE';
@@ -618,7 +668,7 @@ function updateSparkline(ifaceName, rxBps, txBps) {
 }
 
 /**
- * Initializes Chart.js instance with minimal CPU load config
+ * Initializes Chart.js instance
  */
 function initChart() {
   const ctx = document.getElementById('trafficChartContainer');
@@ -636,7 +686,7 @@ function initChart() {
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      animation: false, // Disables CPU heavy animations for STB/mobile
+      animation: false,
       interaction: {
         mode: 'index',
         intersect: false
@@ -693,9 +743,6 @@ function initChart() {
   });
 }
 
-/**
- * Controls chart loading / error / empty state overlays (PRD Section 41-43)
- */
 function setChartOverlay(show, message = '', type = 'loading') {
   const overlay = document.getElementById('chartOverlay');
   const msgEl = document.getElementById('overlayMessage');
@@ -725,7 +772,7 @@ async function fetchChartData(forceRefresh = false) {
   let timeData = [];
   let isSuccess = false;
 
-  if (isDemoMode) {
+  if (isManualDemoMode || isAutoDemoFallback) {
     timeData = getDemoTrafficData(selectedInterfaceFilter, selectedPeriodFilter);
     isSuccess = true;
   } else {
@@ -770,7 +817,6 @@ async function fetchChartData(forceRefresh = false) {
 
     setChartOverlay(false);
 
-    // Build Chart Datasets
     const labels = timeData.map(item => {
       const d = new Date(item.timestamp);
       return isNaN(d.getTime()) ? item.timestamp : d.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -779,7 +825,6 @@ async function fetchChartData(forceRefresh = false) {
     const datasets = [];
 
     if (selectedInterfaceFilter === 'all') {
-      // Show per-interface curves
       monitoredInterfaces.forEach(iface => {
         const colors = getInterfaceColors(iface);
         datasets.push({
@@ -799,7 +844,6 @@ async function fetchChartData(forceRefresh = false) {
         });
       });
     } else {
-      // Single interface detailed view
       const colors = getInterfaceColors(selectedInterfaceFilter);
       datasets.push({
         label: `${selectedInterfaceFilter} Download (RX)`,
